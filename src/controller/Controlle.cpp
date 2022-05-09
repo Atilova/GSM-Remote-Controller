@@ -7,46 +7,86 @@ SystemController::SystemController(TinyGsm& modem, controllerConfig& _config) {
   this -> _config = &_config;
 }
 
+void SystemController::loop(void) {
+  if(_instance -> timerState == ACTIVE && millis() > _instance -> makeshiftPowerTimer)
+    _instance -> resetMakeshiftTimer();
+
+  if(_instance -> _modem -> waitResponse(100, GF("RING")) == 1) {            
+    String buffer = _instance -> _modem -> stream.readString();
+    buffer = buffer.substring(0, buffer.lastIndexOf("\nOK"));    
+    uint8_t command_index = buffer.indexOf("+CLIP: \"") + 8;
+    if(command_index > 7) {
+      String phoneNumber = buffer.substring(command_index, buffer.indexOf("\",", command_index));
+      if(_instance -> isWhiteListed(phoneNumber))
+        _instance -> setNextRelayState();
+      _instance -> _modem -> sendAT(GF("H"));
+    }
+  }
+}
+
+void SystemController::addInterrupt(void) {
+  isButtunPressed = false;
+  attachInterrupt(
+    digitalPinToInterrupt(_config -> swapModePin), 
+    SystemController::swapModeISR,
+    FALLING
+  );
+}
+
+void SystemController::blinkLed(void) {  
+  if(_instance -> isButtunPressed) {    
+    if(millis() > _instance -> lastTimePressed) {
+      _instance -> setMakeShiftPower(!_instance -> _config -> isMakeshitPower);
+      _instance -> addInterrupt();
+    } 
+    else if(digitalRead(_instance -> _config -> swapModePin) == HIGH)
+      _instance -> addInterrupt();    
+  } 
+
+  if(!_instance -> _config -> isMakeshitPower)
+    return;
+  
+  if(millis() > _instance -> lastTimeBlinked) {
+    _instance -> lastTimeBlinked = millis() + 300;
+    if(digitalRead(LED_BUILTIN))
+      digitalWrite(LED_BUILTIN, LOW);
+    else
+      digitalWrite(LED_BUILTIN, HIGH);
+  }
+}
+
 void SystemController::swapModeISR(void) {
-  if(millis() > _instance -> lastTimePressed) {
-    _instance -> lastTimePressed = millis() + 200;
-    _instance -> setMakeShiftPower(!_instance -> _config -> isMakeshitPower);
-  }      
+  _instance -> isButtunPressed = true;
+  _instance -> lastTimePressed = millis() + 700;
+  detachInterrupt(digitalPinToInterrupt(_instance -> _config -> swapModePin));
 }
 
 void SystemController::begin(void) {  
   pinMode(_config -> relayPin, OUTPUT);
   pinMode(_config -> swapModePin, INPUT_PULLUP);
-  if(!_config -> isLowLevelRelay)
-    relayState = false;  
-      
-  attachInterrupt(
-    digitalPinToInterrupt(_config -> swapModePin), 
-    SystemController::swapModeISR,
-    RISING
+
+  setRelayState(
+    _config -> isMakeshitPower && _config -> isOnByDefaultMakeshift 
+      ? HIGH
+      : LOW
   );
-  _instance = this;
-
-  digitalWrite(_config -> relayPin, relayState);  // DOWN by default
   resetModem();
-  while(!_modem -> waitForNetwork()) {
-    delay(1000);
-  }
 
-  ThreadHandler::getInstance()->enableThreadExecution();
+  _instance = this;
+  ThreadHandler::getInstance()->enableThreadExecution();  
+  addInterrupt();
 }
 
-void SystemController::setRelayState(boolean relayState) {
-  const boolean nextState = (
-    relayState
+void SystemController::setRelayState(boolean nextRelayState) {
+  relayState = (
+    nextRelayState
       ? !_config -> isLowLevelRelay 
       : _config -> isLowLevelRelay
   );
-  
-  relayState = nextState;
+    
   digitalWrite(
     _config -> relayPin,
-    nextState
+    relayState
   );
 };
 
@@ -55,7 +95,7 @@ void SystemController::resetModem(void) {
   pinMode(_config -> resetPin, OUTPUT);
   delay(100);
   digitalWrite(_config -> resetPin, LOW);
-  delay(400);
+  delay(200);
   digitalWrite(_config -> resetPin, HIGH);
   initModem();
 }
@@ -74,10 +114,6 @@ void SystemController::initModem(void) {
   _modem -> waitResponse(1000L, GF("OK"));
 }
 
-void SystemController::blinkLed(void) {
-
-}
-
 void SystemController::setMakeShiftPower(boolean isMakeshift) {
   _config -> isMakeshitPower = isMakeshift;
   resetMakeshiftTimer();
@@ -85,60 +121,25 @@ void SystemController::setMakeShiftPower(boolean isMakeshift) {
   if(isMakeshift)
     relayState = _config -> isLowLevelRelay;
   else {
-    digitalWrite(
-      _config -> relayPin,
-      _config -> isLowLevelRelay
-    );
+    digitalWrite(LED_BUILTIN, LOW);
+    setRelayState(LOW);  
   }
-
 }
 
 void SystemController::setNextRelayState(void) {    
   if(_config -> isMakeshitPower) {
-    digitalWrite(
-      _config -> relayPin,
-      _config -> isOnByDefaultMakeshift ?  (_config -> isLowLevelRelay) : (!_config -> isLowLevelRelay)
-    );
+    setRelayState(_config -> isOnByDefaultMakeshift ? LOW : HIGH);
     makeshiftPowerTimer = millis() + _config -> makeShiftPowerDuration*1000;
     timerState = ACTIVE;
   }
-  else {
-    relayState = !relayState;
-    digitalWrite(_config -> relayPin, relayState);  
-  }
+  else
+    setRelayState(!relayState);      
 }
 
 void SystemController::resetMakeshiftTimer(void) {  
-  digitalWrite(
-    _config -> relayPin,
-    _config -> isOnByDefaultMakeshift ? (!_config -> isLowLevelRelay) : (_config -> isLowLevelRelay)
-  );
+  setRelayState(_config -> isOnByDefaultMakeshift ? HIGH : LOW);
   makeshiftPowerTimer = 0;
   timerState = DISABLED;
-}
-
-void SystemController::loop(void) {      
-  if(_instance -> timerState == ACTIVE && millis() > _instance -> makeshiftPowerTimer)
-    _instance -> resetMakeshiftTimer();
-  
-  if(_instance -> _config -> isMakeshitPower) {
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(200);
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(200);
-  }
-
-  if(_instance -> _modem -> waitResponse(10, GF("RING")) == 1) {            
-    String buffer = _instance -> _modem -> stream.readString();
-    buffer = buffer.substring(0, buffer.lastIndexOf("\nOK"));    
-    uint8_t command_index = buffer.indexOf("+CLIP: \"") + 8;
-    if(command_index > 7) {
-      String phoneNumber = buffer.substring(command_index, buffer.indexOf("\",", command_index));
-      if(_instance -> isWhiteListed(phoneNumber))
-        _instance -> setNextRelayState();
-      _instance -> _modem -> sendAT(GF("H"));
-    }
-  }
 }
 
 boolean SystemController::isWhiteListed(const String& phone) {    

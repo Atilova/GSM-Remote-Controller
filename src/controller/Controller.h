@@ -3,12 +3,10 @@
 
   #include <TinyGsmClientSIM800.h>
   #include <ThreadHandler.h>
-
   
-
   // 1000 -> 1ms
-  #define BLINK_PERIOD 300000
-  #define LOOP_PERIOD 100000
+  #define BLINK_PERIOD 100000
+  #define LOOP_PERIOD 100
 
   typedef TinyGsmSim800 TinyGsm;
 
@@ -44,13 +42,18 @@
       TinyGsm* _modem;
       controllerConfig* _config;
       boolean relayState = true;  // If Low level (default) will be down (relay)
+              
+      volatile boolean isButtunPressed = false;
       uint32_t makeshiftPowerTimer,
                lastTimePressed;
+
+      volatile uint32_t lastTimeBlinked;
       makeshiftTimerState timerState = DISABLED;
       void resetModem(void);
       void initModem(void);
       void setNextRelayState(void);
       void resetMakeshiftTimer(void);      
+      void addInterrupt(void);
       void setMakeShiftPower(boolean isMakeshift);
       void setRelayState(boolean relayState);
       boolean isWhiteListed(const String& phone);

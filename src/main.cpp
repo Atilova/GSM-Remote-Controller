@@ -15,12 +15,10 @@ SystemController* SystemController::_instance = NULL;
 
 void setup() {
   Serial.begin(115200);  
-  // GSM_IO.begin(9600);
-  // controller.begin();
+  GSM_IO.begin(9600);
+  controller.begin();
 }
 
 void loop() {
-  // controller.loop();
-  delay(2000);
-  Serial.println("<<LOOPING>>");
+
 }
